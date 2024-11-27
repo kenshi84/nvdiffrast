@@ -956,7 +956,7 @@ derivatives of barycentrics, the second output tensor will also have shape
 surface points are culled away.</p><div class="returns">Returns:<div class="return_description">A tuple of two tensors as in <code>rasterize()</code>.</div></div></div>
 <div class="apifunc"><h4><code>nvdiffrast.torch.interpolate(<em>attr</em>, <em>rast</em>, <em>tri</em>, <em>rast_db</em>=<span class="defarg">None</span>, <em>diff_attrs</em>=<span class="defarg">None</span>)</code>&nbsp;<span class="sym_function">Function</span></h4>
 <p class="shortdesc">Interpolate vertex attributes.</p><p class="longdesc">All input tensors must be contiguous and reside in GPU memory. The output tensors
-will be contiguous and reside in GPU memory.</p><div class="arguments">Arguments:</div><table class="args"><tr class="arg"><td class="argname">attr</td><td class="arg_short">Attribute tensor with dtype <code>torch.float32</code>. 
+will be contiguous and reside in GPU memory.</p><div class="arguments">Arguments:</div><table class="args"><tr class="arg"><td class="argname">attr</td><td class="arg_short">Attribute tensor with dtype <code>torch.float32</code> or <code>torch.float64</code>. 
 Shape is [num_vertices, num_attributes] in range mode, or 
 [minibatch_size, num_vertices, num_attributes] in instanced mode.
 Broadcasting is supported along the minibatch axis.</td></tr><tr class="arg"><td class="argname">rast</td><td class="arg_short">Main output tensor from <code>rasterize()</code>.</td></tr><tr class="arg"><td class="argname">tri</td><td class="arg_short">Triangle tensor with shape [num_triangles, 3] and dtype <code>torch.int32</code>.</td></tr><tr class="arg"><td class="argname">rast_db</td><td class="arg_short">(Optional) Tensor containing image-space derivatives of barycentrics, 

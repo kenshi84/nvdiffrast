@@ -20,19 +20,20 @@
 //------------------------------------------------------------------------
 // CUDA kernel params.
 
-struct InterpolateKernelParams
+template <typename floatT>
+struct InterpolateKernelParamsT
 {
     const int*      tri;                            // Incoming triangle buffer.
-    const float*    attr;                           // Incoming attribute buffer.
+    const floatT*    attr;                          // Incoming attribute buffer.
     const float*    rast;                           // Incoming rasterizer output buffer.
     const float*    rastDB;                         // Incoming rasterizer output buffer for bary derivatives.
-    const float*    dy;                             // Incoming attribute gradients.
-    const float*    dda;                            // Incoming attr diff gradients.
-    float*          out;                            // Outgoing interpolated attributes.
-    float*          outDA;                          // Outgoing texcoord major axis lengths.
-    float*          gradAttr;                       // Outgoing attribute gradients.
-    float*          gradRaster;                     // Outgoing rasterizer gradients.
-    float*          gradRasterDB;                   // Outgoing rasterizer bary diff gradients.
+    const floatT*    dy;                            // Incoming attribute gradients.
+    const floatT*    dda;                           // Incoming attr diff gradients.
+    floatT*          out;                           // Outgoing interpolated attributes.
+    floatT*          outDA;                         // Outgoing texcoord major axis lengths.
+    floatT*          gradAttr;                      // Outgoing attribute gradients.
+    floatT*          gradRaster;                    // Outgoing rasterizer gradients.
+    floatT*          gradRasterDB;                  // Outgoing rasterizer bary diff gradients.
     int             numTriangles;                   // Number of triangles.
     int             numVertices;                    // Number of vertices.
     int             numAttr;                        // Number of total vertex attributes.
@@ -45,5 +46,6 @@ struct InterpolateKernelParams
     int             diff_attrs_all;                 // 0=normal, 1=produce pixel differentials for all attributes.
     int             diffAttrs[IP_MAX_DIFF_ATTRS];   // List of attributes to differentiate.
 };
-
+using InterpolateKernelParams = InterpolateKernelParamsT<float>;
+using InterpolateKernelParams64 = InterpolateKernelParamsT<double>;
 //------------------------------------------------------------------------

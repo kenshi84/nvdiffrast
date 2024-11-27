@@ -180,6 +180,27 @@ static __device__ __forceinline__ uint3 make_uint3(const uint2& a, unsigned int 
 static __device__ __forceinline__ uint4 make_uint4(const uint3& a, unsigned int b)         { return make_uint4(a.x, a.y, a.z, b); }
 static __device__ __forceinline__ uint4 make_uint4(const uint2& a, const uint2& b)         { return make_uint4(a.x, a.y, b.x, b.y); }
 
+template <typename T>
+struct float_trait;
+template <>
+struct float_trait<float> {
+    using vec2 = float2;
+    using vec3 = float3;
+    using vec4 = float4;
+    static __device__ __forceinline__ vec2 make_vec2(float a, float b) { return make_float2(a, b); }
+    static __device__ __forceinline__ vec3 make_vec3(float a, float b, float c) { return make_float3(a, b, c); }
+    static __device__ __forceinline__ vec4 make_vec4(float a, float b, float c, float d) { return make_float4(a, b, c, d); }
+};
+template <>
+struct float_trait<double> {
+    using vec2 = double2;
+    using vec3 = double3;
+    using vec4 = double4;
+    static __device__ __forceinline__ vec2 make_vec2(double a, double b) { return make_double2(a, b); }
+    static __device__ __forceinline__ vec3 make_vec3(double a, double b, double c) { return make_double3(a, b, c); }
+    static __device__ __forceinline__ vec4 make_vec4(double a, double b, double c, double d) { return make_double4(a, b, c, d); }
+};
+
 template<class T> static __device__ __forceinline__ void swap(T& a, T& b)                  { T temp = a; a = b; b = temp; }
 
 //------------------------------------------------------------------------

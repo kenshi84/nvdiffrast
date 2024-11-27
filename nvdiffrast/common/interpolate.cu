@@ -12,9 +12,16 @@
 //------------------------------------------------------------------------
 // Forward kernel.
 
-template <bool ENABLE_DA>
-static __forceinline__ __device__ void InterpolateFwdKernelTemplate(const InterpolateKernelParams p)
+template <bool ENABLE_DA, typename floatT>
+static __forceinline__ __device__ void InterpolateFwdKernelTemplate(const InterpolateKernelParamsT<floatT> p)
 {
+    using floatT2 = typename float_trait<floatT>::vec2;
+    using floatT3 = typename float_trait<floatT>::vec3;
+    using floatT4 = typename float_trait<floatT>::vec4;
+    auto make_floatT2 = float_trait<floatT>::make_vec2;
+    auto make_floatT3 = float_trait<floatT>::make_vec3;
+    auto make_floatT4 = float_trait<floatT>::make_vec4;
+
     // Calculate pixel position.
     int px = blockIdx.x * blockDim.x + threadIdx.x;
     int py = blockIdx.y * blockDim.y + threadIdx.y;
@@ -26,8 +33,8 @@ static __forceinline__ __device__ void InterpolateFwdKernelTemplate(const Interp
     int pidx = px + p.width * (py + p.height * pz);
 
     // Output ptrs.
-    float* out = p.out + pidx * p.numAttr;
-    float2* outDA = ENABLE_DA ? (((float2*)p.outDA) + pidx * p.numDiffAttr) : 0;
+    floatT* out = p.out + pidx * p.numAttr;
+    floatT2* outDA = ENABLE_DA ? (((floatT2*)p.outDA) + pidx * p.numDiffAttr) : 0;
 
     // Fetch rasterizer output.
     float4 r = ((float4*)p.rast)[pidx];
@@ -42,7 +49,7 @@ static __forceinline__ __device__ void InterpolateFwdKernelTemplate(const Interp
             out[i] = 0.f;
         if (ENABLE_DA)
             for (int i=0; i < p.numDiffAttr; i++)
-                outDA[i] = make_float2(0.f, 0.f);
+                outDA[i] = make_floatT2(0.f, 0.f);
         return;
     }
 
@@ -66,9 +73,9 @@ static __forceinline__ __device__ void InterpolateFwdKernelTemplate(const Interp
     }
 
     // Pointers to attributes.
-    const float* a0 = p.attr + vi0 * p.numAttr;
-    const float* a1 = p.attr + vi1 * p.numAttr;
-    const float* a2 = p.attr + vi2 * p.numAttr;
+    const floatT* a0 = p.attr + vi0 * p.numAttr;
+    const floatT* a1 = p.attr + vi1 * p.numAttr;
+    const floatT* a2 = p.attr + vi2 * p.numAttr;
 
     // Barys. If no triangle, force all to zero -> output is zero.
     float b0 = triValid ? r.x : 0.f;
@@ -103,34 +110,43 @@ static __forceinline__ __device__ void InterpolateFwdKernelTemplate(const Interp
             j += p.numAttr; // Python-style negative indices.
 
         // Zero output if invalid index.
-        float dsdx = 0.f;
-        float dsdy = 0.f;
+        floatT dsdx = 0.f;
+        floatT dsdy = 0.f;
         if (j >= 0 && j < p.numAttr)
         {
-            float s0 = a0[j];
-            float s1 = a1[j];
-            float s2 = a2[j];
-            float dsdu = s0 - s2;
-            float dsdv = s1 - s2;
+            floatT s0 = a0[j];
+            floatT s1 = a1[j];
+            floatT s2 = a2[j];
+            floatT dsdu = s0 - s2;
+            floatT dsdv = s1 - s2;
             dsdx = dudx*dsdu + dvdx*dsdv;
             dsdy = dudy*dsdu + dvdy*dsdv;
         }
 
         // Write.
-        outDA[i] = make_float2(dsdx, dsdy);
+        outDA[i] = make_floatT2(dsdx, dsdy);
     }
 }
 
 // Template specializations.
-__global__ void InterpolateFwdKernel  (const InterpolateKernelParams p) { InterpolateFwdKernelTemplate<false>(p); }
-__global__ void InterpolateFwdKernelDa(const InterpolateKernelParams p) { InterpolateFwdKernelTemplate<true>(p); }
+__global__ void InterpolateFwdKernel  (const InterpolateKernelParams p) { InterpolateFwdKernelTemplate<false, float>(p); }
+__global__ void InterpolateFwdKernelDa(const InterpolateKernelParams p) { InterpolateFwdKernelTemplate<true, float>(p); }
+__global__ void InterpolateFwdKernel64  (const InterpolateKernelParams64 p) { InterpolateFwdKernelTemplate<false, double>(p); }
+__global__ void InterpolateFwdKernelDa64(const InterpolateKernelParams64 p) { InterpolateFwdKernelTemplate<true, double>(p); }
 
 //------------------------------------------------------------------------
 // Gradient kernel.
 
-template <bool ENABLE_DA>
-static __forceinline__ __device__ void InterpolateGradKernelTemplate(const InterpolateKernelParams p)
+template <bool ENABLE_DA, typename floatT>
+static __forceinline__ __device__ void InterpolateGradKernelTemplate(const InterpolateKernelParamsT<floatT> p)
 {
+    using floatT2 = typename float_trait<floatT>::vec2;
+    using floatT3 = typename float_trait<floatT>::vec3;
+    using floatT4 = typename float_trait<floatT>::vec4;
+    auto make_floatT2 = float_trait<floatT>::make_vec2;
+    auto make_floatT3 = float_trait<floatT>::make_vec3;
+    auto make_floatT4 = float_trait<floatT>::make_vec4;
+
     // Temporary space for coalesced atomics.
     CA_DECLARE_TEMP(IP_GRAD_MAX_KERNEL_BLOCK_WIDTH * IP_GRAD_MAX_KERNEL_BLOCK_HEIGHT);
 
@@ -149,9 +165,9 @@ static __forceinline__ __device__ void InterpolateGradKernelTemplate(const Inter
     int triIdx = float_to_triidx(r.w) - 1;
     if (triIdx < 0 || triIdx >= p.numTriangles)
     {
-        ((float4*)p.gradRaster)[pidx] = make_float4(0.f, 0.f, 0.f, 0.f);
+        ((floatT4*)p.gradRaster)[pidx] = make_floatT4(0.f, 0.f, 0.f, 0.f);
         if (ENABLE_DA)
-            ((float4*)p.gradRasterDB)[pidx] = make_float4(0.f, 0.f, 0.f, 0.f);
+            ((floatT4*)p.gradRasterDB)[pidx] = make_floatT4(0.f, 0.f, 0.f, 0.f);
         return;
     }
 
@@ -178,30 +194,30 @@ static __forceinline__ __device__ void InterpolateGradKernelTemplate(const Inter
     CA_SET_GROUP(triIdx);
 
     // Pointers to inputs.
-    const float* a0 = p.attr + vi0 * p.numAttr;
-    const float* a1 = p.attr + vi1 * p.numAttr;
-    const float* a2 = p.attr + vi2 * p.numAttr;
-    const float* pdy = p.dy + pidx * p.numAttr;
+    const floatT* a0 = p.attr + vi0 * p.numAttr;
+    const floatT* a1 = p.attr + vi1 * p.numAttr;
+    const floatT* a2 = p.attr + vi2 * p.numAttr;
+    const floatT* pdy = p.dy + pidx * p.numAttr;
 
     // Pointers to outputs.
-    float* ga0 = p.gradAttr + vi0 * p.numAttr;
-    float* ga1 = p.gradAttr + vi1 * p.numAttr;
-    float* ga2 = p.gradAttr + vi2 * p.numAttr;
+    floatT* ga0 = p.gradAttr + vi0 * p.numAttr;
+    floatT* ga1 = p.gradAttr + vi1 * p.numAttr;
+    floatT* ga2 = p.gradAttr + vi2 * p.numAttr;
 
     // Barys and bary gradient accumulators.
     float b0 = r.x;
     float b1 = r.y;
     float b2 = 1.f - r.x - r.y;
-    float gb0 = 0.f;
-    float gb1 = 0.f;
+    floatT gb0 = 0.f;
+    floatT gb1 = 0.f;
 
     // Loop over attributes and accumulate attribute gradients.
     for (int i=0; i < p.numAttr; i++)
     {
-        float y = pdy[i];
-        float s0 = a0[i];
-        float s1 = a1[i];
-        float s2 = a2[i];
+        floatT y = pdy[i];
+        floatT s0 = a0[i];
+        floatT s1 = a1[i];
+        floatT s2 = a2[i];
         gb0 += y * (s0 - s2);
         gb1 += y * (s1 - s2);
         caAtomicAdd(ga0 + i, b0 * y);
@@ -210,18 +226,18 @@ static __forceinline__ __device__ void InterpolateGradKernelTemplate(const Inter
     }
 
     // Write the bary gradients.
-    ((float4*)p.gradRaster)[pidx] = make_float4(gb0, gb1, 0.f, 0.f);
+    ((floatT4*)p.gradRaster)[pidx] = make_floatT4(gb0, gb1, 0.f, 0.f);
 
     // If pixel differentials disabled, we're done.
     if (!ENABLE_DA)
         return;
 
     // Calculate gradients based on attribute pixel differentials.
-    const float2* dda = ((float2*)p.dda) + pidx * p.numDiffAttr;
-    float gdudx = 0.f;
-    float gdudy = 0.f;
-    float gdvdx = 0.f;
-    float gdvdy = 0.f;
+    const floatT2* dda = ((floatT2*)p.dda) + pidx * p.numDiffAttr;
+    floatT gdudx = 0.f;
+    floatT gdudy = 0.f;
+    floatT gdvdx = 0.f;
+    floatT gdvdy = 0.f;
 
     // Read bary pixel differentials.
     float4 db = ((float4*)p.rastDB)[pidx];
@@ -240,25 +256,25 @@ static __forceinline__ __device__ void InterpolateGradKernelTemplate(const Inter
         // Check that index is valid.
         if (j >= 0 && j < p.numAttr)
         {
-            float2 dsdxy = dda[i];
-            float dsdx = dsdxy.x;
-            float dsdy = dsdxy.y;
+            floatT2 dsdxy = dda[i];
+            floatT dsdx = dsdxy.x;
+            floatT dsdy = dsdxy.y;
 
-            float s0 = a0[j];
-            float s1 = a1[j];
-            float s2 = a2[j];
+            floatT s0 = a0[j];
+            floatT s1 = a1[j];
+            floatT s2 = a2[j];
 
             // Gradients of db.
-            float dsdu = s0 - s2;
-            float dsdv = s1 - s2;
+            floatT dsdu = s0 - s2;
+            floatT dsdv = s1 - s2;
             gdudx += dsdu * dsdx;
             gdudy += dsdu * dsdy;
             gdvdx += dsdv * dsdx;
             gdvdy += dsdv * dsdy;
 
             // Gradients of attributes.
-            float du = dsdx*dudx + dsdy*dudy;
-            float dv = dsdx*dvdx + dsdy*dvdy;
+            floatT du = dsdx*dudx + dsdy*dudy;
+            floatT dv = dsdx*dvdx + dsdy*dvdy;
             caAtomicAdd(ga0 + j, du);
             caAtomicAdd(ga1 + j, dv);
             caAtomicAdd(ga2 + j, -du - dv);
@@ -266,11 +282,13 @@ static __forceinline__ __device__ void InterpolateGradKernelTemplate(const Inter
     }
 
     // Write.
-    ((float4*)p.gradRasterDB)[pidx] = make_float4(gdudx, gdudy, gdvdx, gdvdy);
+    ((floatT4*)p.gradRasterDB)[pidx] = make_floatT4(gdudx, gdudy, gdvdx, gdvdy);
 }
 
 // Template specializations.
-__global__ void InterpolateGradKernel  (const InterpolateKernelParams p) { InterpolateGradKernelTemplate<false>(p); }
-__global__ void InterpolateGradKernelDa(const InterpolateKernelParams p) { InterpolateGradKernelTemplate<true>(p); }
+__global__ void InterpolateGradKernel  (const InterpolateKernelParams p) { InterpolateGradKernelTemplate<false, float>(p); }
+__global__ void InterpolateGradKernelDa(const InterpolateKernelParams p) { InterpolateGradKernelTemplate<true, float>(p); }
+__global__ void InterpolateGradKernel64  (const InterpolateKernelParams64 p) { InterpolateGradKernelTemplate<false, double>(p); }
+__global__ void InterpolateGradKernelDa64(const InterpolateKernelParams64 p) { InterpolateGradKernelTemplate<true, double>(p); }
 
 //------------------------------------------------------------------------

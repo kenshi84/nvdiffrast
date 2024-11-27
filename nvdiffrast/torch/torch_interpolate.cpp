@@ -15,13 +15,18 @@
 
 void InterpolateFwdKernel   (const InterpolateKernelParams p);
 void InterpolateFwdKernelDa (const InterpolateKernelParams p);
+void InterpolateFwdKernel64   (const InterpolateKernelParams64 p);
+void InterpolateFwdKernelDa64 (const InterpolateKernelParams64 p);
 void InterpolateGradKernel  (const InterpolateKernelParams p);
 void InterpolateGradKernelDa(const InterpolateKernelParams p);
+void InterpolateGradKernel64  (const InterpolateKernelParams64 p);
+void InterpolateGradKernelDa64(const InterpolateKernelParams64 p);
 
 //------------------------------------------------------------------------
 // Helper
 
-static void set_diff_attrs(InterpolateKernelParams& p, bool diff_attrs_all, std::vector<int>& diff_attrs_vec)
+template <typename floatT>
+static void set_diff_attrs(InterpolateKernelParamsT<floatT>& p, bool diff_attrs_all, std::vector<int>& diff_attrs_vec)
 {
     if (diff_attrs_all)
     {
@@ -44,24 +49,30 @@ std::tuple<torch::Tensor, torch::Tensor> interpolate_fwd_da(torch::Tensor attr, 
     const at::cuda::OptionalCUDAGuard device_guard(device_of(attr));
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
     InterpolateKernelParams p = {}; // Initialize all fields to zero.
+    InterpolateKernelParams64 p64 = {};
     bool enable_da = (rast_db.defined()) && (diff_attrs_all || !diff_attrs_vec.empty());
-    p.instance_mode = (attr.sizes().size() > 2) ? 1 : 0;
+    bool use_double = attr.scalar_type() == torch::kFloat64;
+    p.instance_mode = p64.instance_mode = (attr.sizes().size() > 2) ? 1 : 0;
 
     // Check inputs.
     if (enable_da)
     {
         NVDR_CHECK_DEVICE(attr, rast, tri, rast_db);
         NVDR_CHECK_CONTIGUOUS(attr, rast, tri, rast_db);
-        NVDR_CHECK_F32(attr, rast, rast_db);
+        NVDR_CHECK_F32(rast, rast_db);
         NVDR_CHECK_I32(tri);
     }
     else
     {
         NVDR_CHECK_DEVICE(attr, rast, tri);
         NVDR_CHECK_CONTIGUOUS(attr, rast, tri);
-        NVDR_CHECK_F32(attr, rast);
+        NVDR_CHECK_F32(rast);
         NVDR_CHECK_I32(tri);
     }
+    if (use_double)
+        NVDR_CHECK_F64(attr);
+    else
+        NVDR_CHECK_F32(attr);
 
     // Sanity checks.
     NVDR_CHECK(rast.sizes().size() == 4 && rast.size(0) > 0 && rast.size(1) > 0 && rast.size(2) > 0 && rast.size(3) == 4, "rast must have shape[>0, >0, >0, 4]");
@@ -77,46 +88,59 @@ std::tuple<torch::Tensor, torch::Tensor> interpolate_fwd_da(torch::Tensor attr, 
     }
 
     // Extract input dimensions.
-    p.numVertices  = attr.size(p.instance_mode ? 1 : 0);
-    p.numAttr      = attr.size(p.instance_mode ? 2 : 1);
-    p.numTriangles = tri.size(0);
-    p.height       = rast.size(1);
-    p.width        = rast.size(2);
-    p.depth        = rast.size(0);
+    p.numVertices  = p64.numVertices  = attr.size(p.instance_mode ? 1 : 0);
+    p.numAttr      = p64.numAttr      = attr.size(p.instance_mode ? 2 : 1);
+    p.numTriangles = p64.numTriangles = tri.size(0);
+    p.height       = p64.height       = rast.size(1);
+    p.width        = p64.width        = rast.size(2);
+    p.depth        = p64.depth        = rast.size(0);
 
     // Set attribute pixel differential info if enabled, otherwise leave as zero.
     if (enable_da)
-        set_diff_attrs(p, diff_attrs_all, diff_attrs_vec);
+    {
+        if (use_double)
+            set_diff_attrs(p64, diff_attrs_all, diff_attrs_vec);
+        else
+            set_diff_attrs(p, diff_attrs_all, diff_attrs_vec);
+    }
     else
-        p.numDiffAttr = 0;
+        p.numDiffAttr = p64.numDiffAttr = 0;
 
     // Get input pointers.
-    p.attr = attr.data_ptr<float>();
-    p.rast = rast.data_ptr<float>();
-    p.tri = tri.data_ptr<int>();
-    p.rastDB = enable_da ? rast_db.data_ptr<float>() : NULL;
-    p.attrBC = (p.instance_mode && attr.size(0) == 1) ? 1 : 0;
+    p.attr = !use_double ? attr.data_ptr<float>() : NULL;
+    p64.attr = use_double ? attr.data_ptr<double>() : NULL;
+    p.rast = p64.rast = rast.data_ptr<float>();
+    p.tri = p64.tri = tri.data_ptr<int>();
+    p.rastDB = p64.rastDB = enable_da ? rast_db.data_ptr<float>() : NULL;
+    p.attrBC = p64.attrBC = (p.instance_mode && attr.size(0) == 1) ? 1 : 0;
 
     // Allocate output tensors.
-    torch::TensorOptions opts = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+    torch::TensorOptions opts = torch::TensorOptions().dtype(use_double ? torch::kFloat64 : torch::kFloat32).device(torch::kCUDA);
     torch::Tensor out = torch::empty({p.depth, p.height, p.width, p.numAttr}, opts);
     torch::Tensor out_da = torch::empty({p.depth, p.height, p.width, p.numDiffAttr * 2}, opts);
 
-    p.out = out.data_ptr<float>();
-    p.outDA = enable_da ? out_da.data_ptr<float>() : NULL;
+    p.out = !use_double ? out.data_ptr<float>() : NULL;
+    p64.out = use_double ? out.data_ptr<double>() : NULL;
+    p.outDA = enable_da && !use_double ? out_da.data_ptr<float>() : NULL;
+    p64.outDA = enable_da && use_double ? out_da.data_ptr<double>() : NULL;
 
     // Verify that buffers are aligned to allow float2/float4 operations.
     NVDR_CHECK(!((uintptr_t)p.rast   & 15), "rast input tensor not aligned to float4");
     NVDR_CHECK(!((uintptr_t)p.rastDB & 15), "rast_db input tensor not aligned to float4");
     NVDR_CHECK(!((uintptr_t)p.outDA  &  7), "out_da output tensor not aligned to float2");
+    NVDR_CHECK(!((uintptr_t)p64.outDA & 15), "out_da output tensor not aligned to double2");
 
     // Choose launch parameters.
     dim3 blockSize = getLaunchBlockSize(IP_FWD_MAX_KERNEL_BLOCK_WIDTH, IP_FWD_MAX_KERNEL_BLOCK_HEIGHT, p.width, p.height);
     dim3 gridSize  = getLaunchGridSize(blockSize, p.width, p.height, p.depth);
 
     // Launch CUDA kernel.
-    void* args[] = {&p};
-    void* func = enable_da ? (void*)InterpolateFwdKernelDa : (void*)InterpolateFwdKernel;
+    void* args[] = {use_double ? (void*)&p64 : (void*)&p};
+    void* func;
+    if (use_double)
+        func = enable_da ? (void*)InterpolateFwdKernelDa64 : (void*)InterpolateFwdKernel64;
+    else
+        func = enable_da ? (void*)InterpolateFwdKernelDa : (void*)InterpolateFwdKernel;
     NVDR_CHECK_CUDA_ERROR(cudaLaunchKernel(func, gridSize, blockSize, args, 0, stream));
 
     // Return results.
@@ -139,24 +163,34 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> interpolate_grad_da(torc
     const at::cuda::OptionalCUDAGuard device_guard(device_of(attr));
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
     InterpolateKernelParams p = {}; // Initialize all fields to zero.
+    InterpolateKernelParams64 p64 = {};
     bool enable_da = (rast_db.defined()) && (diff_attrs_all || !diff_attrs_vec.empty());
-    p.instance_mode = (attr.sizes().size() > 2) ? 1 : 0;
+    bool use_double = attr.scalar_type() == torch::kFloat64;
+    p.instance_mode = p64.instance_mode = (attr.sizes().size() > 2) ? 1 : 0;
 
     // Check inputs.
     if (enable_da)
     {
         NVDR_CHECK_DEVICE(attr, rast, tri, dy, rast_db, dda);
         NVDR_CHECK_CONTIGUOUS(attr, rast, tri, rast_db);
-        NVDR_CHECK_F32(attr, rast, dy, rast_db, dda);
+        NVDR_CHECK_F32(rast, rast_db);
         NVDR_CHECK_I32(tri);
+        if (use_double)
+            NVDR_CHECK_F64(dda);
+        else
+            NVDR_CHECK_F32(dda);
     }
     else
     {
         NVDR_CHECK_DEVICE(attr, rast, tri, dy);
         NVDR_CHECK_CONTIGUOUS(attr, rast, tri);
-        NVDR_CHECK_F32(attr, rast, dy);
+        NVDR_CHECK_F32(rast);
         NVDR_CHECK_I32(tri);
     }
+    if (use_double)
+        NVDR_CHECK_F64(attr, dy);
+    else
+        NVDR_CHECK_F32(attr, dy);
 
     // Depth of attributes.
     int attr_depth = p.instance_mode ? (attr.sizes().size() > 1 ? attr.size(0) : 0) : 1;
@@ -178,12 +212,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> interpolate_grad_da(torc
     }
 
     // Extract input dimensions.
-    p.numVertices  = attr.size(p.instance_mode ? 1 : 0);
-    p.numAttr      = attr.size(p.instance_mode ? 2 : 1);
-    p.numTriangles = tri.size(0);
-    p.height       = rast.size(1);
-    p.width        = rast.size(2);
-    p.depth        = rast.size(0);
+    p.numVertices  = p64.numVertices  = attr.size(p.instance_mode ? 1 : 0);
+    p.numAttr      = p64.numAttr      = attr.size(p.instance_mode ? 2 : 1);
+    p.numTriangles = p64.numTriangles = tri.size(0);
+    p.height       = p64.height       = rast.size(1);
+    p.width        = p64.width        = rast.size(2);
+    p.depth        = p64.depth        = rast.size(0);
 
     // Ensure gradients are contiguous.
     torch::Tensor dy_ = dy.contiguous();
@@ -193,45 +227,63 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> interpolate_grad_da(torc
 
     // Set attribute pixel differential info if enabled, otherwise leave as zero.
     if (enable_da)
-        set_diff_attrs(p, diff_attrs_all, diff_attrs_vec);
+    {
+        if (use_double)
+            set_diff_attrs(p64, diff_attrs_all, diff_attrs_vec);
+        else
+            set_diff_attrs(p, diff_attrs_all, diff_attrs_vec);
+    }
     else
-        p.numDiffAttr = 0;
+        p.numDiffAttr = p64.numDiffAttr = 0;
 
     // Get input pointers.
-    p.attr = attr.data_ptr<float>();
-    p.rast = rast.data_ptr<float>();
-    p.tri = tri.data_ptr<int>();
-    p.dy = dy_.data_ptr<float>();
-    p.rastDB = enable_da ? rast_db.data_ptr<float>() : NULL;
-    p.dda = enable_da ? dda_.data_ptr<float>() : NULL;
-    p.attrBC = (p.instance_mode && attr_depth < p.depth) ? 1 : 0;
+    p.attr = !use_double ? attr.data_ptr<float>() : NULL;
+    p64.attr = use_double ? attr.data_ptr<double>() : NULL;
+    p.rast = p64.rast = rast.data_ptr<float>();
+    p.tri = p64.tri = tri.data_ptr<int>();
+    p.dy = !use_double ? dy_.data_ptr<float>() : NULL;
+    p64.dy = use_double ? dy_.data_ptr<double>() : NULL;
+    p.rastDB = p64.rastDB = enable_da ? rast_db.data_ptr<float>() : NULL;
+    p.dda = enable_da && !use_double ? dda_.data_ptr<float>() : NULL;
+    p64.dda = enable_da && use_double ? dda_.data_ptr<double>() : NULL;
+    p.attrBC = p64.attrBC = (p.instance_mode && attr_depth < p.depth) ? 1 : 0;
 
     // Allocate output tensors.
-    torch::TensorOptions opts = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+    torch::TensorOptions opts = torch::TensorOptions().dtype(use_double ? torch::kFloat64 : torch::kFloat32).device(torch::kCUDA);
     torch::Tensor gradAttr = torch::zeros_like(attr);
-    torch::Tensor gradRaster = torch::empty_like(rast);
+    torch::Tensor gradRaster = torch::empty(rast.sizes(), opts);
     torch::Tensor gradRasterDB;
     if (enable_da)
-        gradRasterDB = torch::empty_like(rast_db);
+        gradRasterDB = torch::empty(rast_db.sizes(), opts);
 
-    p.gradAttr = gradAttr.data_ptr<float>();
-    p.gradRaster = gradRaster.data_ptr<float>();
-    p.gradRasterDB = enable_da ? gradRasterDB.data_ptr<float>() : NULL;
+    p.gradAttr = !use_double ? gradAttr.data_ptr<float>() : NULL;
+    p64.gradAttr = use_double ? gradAttr.data_ptr<double>() : NULL;
+    p.gradRaster = !use_double ? gradRaster.data_ptr<float>() : NULL;
+    p64.gradRaster = use_double ? gradRaster.data_ptr<double>() : NULL;
+    p.gradRasterDB = enable_da && !use_double ? gradRasterDB.data_ptr<float>() : NULL;
+    p64.gradRasterDB = enable_da && use_double ? gradRasterDB.data_ptr<double>() : NULL;
 
     // Verify that buffers are aligned to allow float2/float4 operations.
     NVDR_CHECK(!((uintptr_t)p.rast         & 15), "rast input tensor not aligned to float4");
     NVDR_CHECK(!((uintptr_t)p.rastDB       & 15), "rast_db input tensor not aligned to float4");
     NVDR_CHECK(!((uintptr_t)p.dda          &  7), "dda input tensor not aligned to float2");
+    NVDR_CHECK(!((uintptr_t)p64.dda        & 15), "dda input tensor not aligned to double2");
     NVDR_CHECK(!((uintptr_t)p.gradRaster   & 15), "grad_rast output tensor not aligned to float4");
+    NVDR_CHECK(!((uintptr_t)p64.gradRaster & 31), "grad_rast output tensor not aligned to double4");
     NVDR_CHECK(!((uintptr_t)p.gradRasterDB & 15), "grad_rast_db output tensor not aligned to float4");
+    NVDR_CHECK(!((uintptr_t)p64.gradRasterDB & 31), "grad_rast_db output tensor not aligned to double4");
 
     // Choose launch parameters.
     dim3 blockSize = getLaunchBlockSize(IP_GRAD_MAX_KERNEL_BLOCK_WIDTH, IP_GRAD_MAX_KERNEL_BLOCK_HEIGHT, p.width, p.height);
     dim3 gridSize  = getLaunchGridSize(blockSize, p.width, p.height, p.depth);
 
     // Launch CUDA kernel.
-    void* args[] = {&p};
-    void* func = enable_da ? (void*)InterpolateGradKernelDa : (void*)InterpolateGradKernel;
+    void* args[] = {use_double ? (void*)&p64 : (void*)&p};
+    void* func;
+    if (use_double)
+        func = enable_da ? (void*)InterpolateGradKernelDa64 : (void*)InterpolateGradKernel64;
+    else
+        func = enable_da ? (void*)InterpolateGradKernelDa : (void*)InterpolateGradKernel;
     NVDR_CHECK_CUDA_ERROR(cudaLaunchKernel(func, gridSize, blockSize, args, 0, stream));
 
     // Return results.

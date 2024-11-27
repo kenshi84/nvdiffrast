@@ -428,7 +428,7 @@ def interpolate(attr, rast, tri, rast_db=None, diff_attrs=None):
     will be contiguous and reside in GPU memory.
 
     Args:
-        attr: Attribute tensor with dtype `torch.float32`. 
+        attr: Attribute tensor with dtype `torch.float32` or `torch.float64`. 
               Shape is [num_vertices, num_attributes] in range mode, or 
               [minibatch_size, num_vertices, num_attributes] in instanced mode.
               Broadcasting is supported along the minibatch axis.

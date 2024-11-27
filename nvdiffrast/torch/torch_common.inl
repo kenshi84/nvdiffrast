@@ -22,8 +22,12 @@
 #define NVDR_CHECK_CONTIGUOUS(...) do { nvdr_check_contiguous({__VA_ARGS__}, __func__, "(): Inputs " #__VA_ARGS__ " must be contiguous tensors"); } while(0)
 #define NVDR_CHECK_F32(...) do { nvdr_check_f32({__VA_ARGS__}, __func__, "(): Inputs " #__VA_ARGS__ " must be float32 tensors"); } while(0)
 #define NVDR_CHECK_I32(...) do { nvdr_check_i32({__VA_ARGS__}, __func__, "(): Inputs " #__VA_ARGS__ " must be int32 tensors"); } while(0)
+#define NVDR_CHECK_F64(...) do { nvdr_check_f64({__VA_ARGS__}, __func__, "(): Inputs " #__VA_ARGS__ " must be float64 tensors"); } while(0)
+#define NVDR_CHECK_I64(...) do { nvdr_check_i64({__VA_ARGS__}, __func__, "(): Inputs " #__VA_ARGS__ " must be int64 tensors"); } while(0)
 inline void nvdr_check_cpu(at::ArrayRef<at::Tensor> ts,        const char* func, const char* err_msg) { for (const at::Tensor& t : ts) TORCH_CHECK(t.device().type() == c10::DeviceType::CPU, func, err_msg); }
 inline void nvdr_check_contiguous(at::ArrayRef<at::Tensor> ts, const char* func, const char* err_msg) { for (const at::Tensor& t : ts) TORCH_CHECK(t.is_contiguous(), func, err_msg); }
 inline void nvdr_check_f32(at::ArrayRef<at::Tensor> ts,        const char* func, const char* err_msg) { for (const at::Tensor& t : ts) TORCH_CHECK(t.dtype() == torch::kFloat32, func, err_msg); }
 inline void nvdr_check_i32(at::ArrayRef<at::Tensor> ts,        const char* func, const char* err_msg) { for (const at::Tensor& t : ts) TORCH_CHECK(t.dtype() == torch::kInt32, func, err_msg); }
+inline void nvdr_check_f64(at::ArrayRef<at::Tensor> ts,        const char* func, const char* err_msg) { for (const at::Tensor& t : ts) TORCH_CHECK(t.dtype() == torch::kFloat64, func, err_msg); }
+inline void nvdr_check_i64(at::ArrayRef<at::Tensor> ts,        const char* func, const char* err_msg) { for (const at::Tensor& t : ts) TORCH_CHECK(t.dtype() == torch::kInt64, func, err_msg); }
 //------------------------------------------------------------------------
